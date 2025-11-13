@@ -1,0 +1,225 @@
+from typing import Tuple, List
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+
+
+def encode_gender(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Замінює текстові значення статі ('Male', 'Female') на числові (1, 0).
+
+    Args:
+        df (pd.DataFrame): Вхідний DataFrame з колонкою 'Gender'.
+
+    Returns:
+        pd.DataFrame: DataFrame з оновленою колонкою 'Gender'.
+    """
+    df_new = df.copy()
+    df_new['Gender'] = df_new['Gender'].replace({'Male': 1, 'Female': 0})
+    return df_new
+
+
+def get_column_types(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """
+    Визначає числові та категоріальні колонки у DataFrame.
+
+    Args:
+        df (pd.DataFrame): Вхідний DataFrame.
+
+    Returns:
+        Tuple[List[str], List[str]]: Список числових та список категоріальних колонок.
+    """
+    df = df.copy()
+    df.drop('Exited', axis=1, errors='ignore', inplace=True)
+
+    numeric_cols = df.select_dtypes('number').columns[2:].tolist()
+    categorical_cols = df.select_dtypes('object').columns.tolist()
+    return numeric_cols, categorical_cols
+
+
+def get_columns_for_scaling(numeric_cols: List[str]) -> List[str]:
+    """
+    Визначає колонки, які потрібно масштабувати (перші 5 + остання).
+
+    Args:
+        numeric_cols (List[str]): Список числових колонок.
+
+    Returns:
+        List[str]: Колонки, які потрібно масштабувати.
+    """
+    return numeric_cols[:5] + numeric_cols[-1:]
+
+
+def split_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Розділяє дані на train та validation з однаковою пропорцією класів.
+
+    Args:
+        df (pd.DataFrame): Вхідний DataFrame.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: train та validation DataFrames.
+    """
+    return train_test_split(df.iloc[:, :-1], df['Exited'], test_size=0.2, random_state=42, stratify=df['Exited'])
+
+
+def scale_numeric_features(
+    train_df: pd.DataFrame, valid_df: pd.DataFrame, cols_to_scale: List[str]
+) -> Tuple[pd.DataFrame, pd.DataFrame, MinMaxScaler]:
+    """
+    Масштабує числові ознаки за допомогою MinMaxScaler.
+
+    Args:
+        train_df (pd.DataFrame): Навчальна вибірка.
+        valid_df (pd.DataFrame): Валідаційна вибірка.
+        cols_to_scale (List[str]): Список колонок для масштабування.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame, MinMaxScaler]: 
+            Модифіковані train, valid DataFrames і fitted scaler.
+    """
+    scaler = MinMaxScaler()
+    scaler.fit(train_df[cols_to_scale])
+
+    train_df = train_df.copy()
+    valid_df = valid_df.copy()
+
+    train_df[cols_to_scale] = scaler.transform(train_df[cols_to_scale])
+    valid_df[cols_to_scale] = scaler.transform(valid_df[cols_to_scale])
+
+    return train_df, valid_df, scaler
+
+
+def encode_geography(
+    train_df: pd.DataFrame, valid_df: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame, OneHotEncoder]:
+    """
+    Кодує категоріальну змінну 'Geography' за допомогою OneHotEncoder.
+
+    Args:
+        train_df (pd.DataFrame): Навчальна вибірка.
+        valid_df (pd.DataFrame): Валідаційна вибірка.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame, OneHotEncoder]:
+            Оновлені train, valid DataFrames та fitted encoder.
+    """
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+    encoder.fit(train_df[['Geography']])
+
+    encoded_cols = encoder.get_feature_names_out(['Geography']).tolist()
+
+    train_df = train_df.copy()
+    valid_df = valid_df.copy()
+
+    train_df[encoded_cols] = encoder.transform(train_df[['Geography']])
+    valid_df[encoded_cols] = encoder.transform(valid_df[['Geography']])
+
+    train_df = train_df.drop('Geography', axis=1)
+    valid_df = valid_df.drop('Geography', axis=1)
+    
+    return train_df, valid_df, encoder
+
+
+def preprocess_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Повний процес попередньої обробки: кодування, масштабування, one-hot encoding.
+
+    Args:
+        df (pd.DataFrame): Вхідний сирий DataFrame.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: Оброблені train та validation DataFrames.
+    """
+    df = encode_gender(df)
+    numeric_cols, _ = get_column_types(df)
+    cols_to_scale = get_columns_for_scaling(numeric_cols)
+    df = df.drop('Surname', axis=1)
+    df_train, df_valid, y_train, y_valid = split_data(df)
+    df_train, df_valid, scaler = scale_numeric_features(df_train, df_valid, cols_to_scale)
+    df_train, df_valid, encoder = encode_geography(df_train, df_valid)
+    return {
+        'train_x': df_train,
+        'train_y': y_train,
+        'val_x': df_valid,
+        'val_y' : y_valid,
+        'input_cols' : list(df_train.columns),
+        'scaler': scaler,
+        'encoder': encoder
+    }
+
+
+# def preprocess_new_data(df, encoder, scaler):
+#     numeric_cols, _ = get_column_types(df)
+#     cols_to_scale = get_columns_for_scaling(numeric_cols)
+
+#     df[cols_to_scale] = scaler.transform(df[cols_to_scale])
+
+#     encoded_cols = encoder.get_feature_names_out(['Geography']).tolist()
+
+#     df[encoded_cols] = encoder.transform(df[['Geography']])
+#     df[encoded_cols] = encoder.transform(df[['Geography']])
+
+#     return df
+
+
+def scale_new_data(df: pd.DataFrame, scaler: MinMaxScaler, cols_to_scale: List[str]) -> pd.DataFrame:
+    """
+    Масштабує числові ознаки у нових даних, використовуючи попередньо навчений scaler.
+
+    Args:
+        df (pd.DataFrame): Новий DataFrame для масштабування.
+        scaler (MinMaxScaler): Попередньо навчений об’єкт MinMaxScaler.
+        cols_to_scale (List[str]): Колонки, які потрібно масштабувати.
+
+    Returns:
+        pd.DataFrame: DataFrame із масштабованими числовими ознаками.
+    """
+    df_new = df.copy()
+    df_new[cols_to_scale] = scaler.transform(df_new[cols_to_scale])
+    return df_new
+
+
+def encode_new_geography(df: pd.DataFrame, encoder: OneHotEncoder) -> pd.DataFrame:
+    """
+    One-hot кодує колонку 'Geography' у новому наборі даних за допомогою попередньо навченного encoder.
+
+    Args:
+        df (pd.DataFrame): Новий DataFrame з колонкою 'Geography'.
+        encoder (OneHotEncoder): Попередньо навчений об’єкт OneHotEncoder.
+
+    Returns:
+        pd.DataFrame: DataFrame із доданими one-hot колонками.
+    """
+    df = df.copy()
+    encoded_cols = encoder.get_feature_names_out(['Geography']).tolist()
+    df[encoded_cols] = encoder.transform(df[['Geography']])
+    df = df.drop('Geography', axis=1)
+    
+    return df
+
+
+def preprocess_new_data(df: pd.DataFrame, encoder: OneHotEncoder, scaler: MinMaxScaler) -> pd.DataFrame:
+    """
+    Повна попередня обробка для нових (невідомих) даних:
+    - визначення числових колонок
+    - масштабування
+    - one-hot кодування категоріальної ознаки 'Geography'
+
+    Args:
+        df (pd.DataFrame): Новий DataFrame для обробки.
+        encoder (OneHotEncoder): Попередньо навчений OneHotEncoder.
+        scaler (MinMaxScaler): Попередньо навчений MinMaxScaler.
+
+    Returns:
+        pd.DataFrame: Оброблений DataFrame, готовий до передбачення.
+    """
+    df = encode_gender(df)
+    numeric_cols, _ = get_column_types(df)
+    cols_to_scale = get_columns_for_scaling(numeric_cols)
+    df = scale_new_data(df, scaler, cols_to_scale)
+    df = encode_new_geography(df, encoder)    
+    df = df.drop('Surname', axis=1)
+    return df
+
+
